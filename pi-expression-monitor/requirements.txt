@@ -1,0 +1,4 @@
+# Installed with pip inside the virtual environment.
+# picamera2, OpenCV, Pillow-Tk and Flask come from apt (see setup.sh).
+mediapipe
+flask

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Expression monitor</title>
+<style>
+  :root {
+    --bg: #EEF1F5; --panel: #FFFFFF; --ink: #16202B; --muted: #5E6A79;
+    --line: #D9DFE7; --track: #E6EAF0; --focus: #2F7FC1;
+    --happy: #E3A008; --surprised: #7A5AF8; --sad: #2F7FC1;
+    --angry: #D64545; --disgust: #3E9B64; --neutral: #8693A1;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161D; --panel: #18212B; --ink: #E8EDF3; --muted: #9AA7B6;
+      --line: #2A3542; --track: #26313D; --focus: #6FB1E8;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+    line-height: 1.45;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 18px 28px;
+  }
+  h1 { font-size: 1.25rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 0.9rem; font-weight: 650; margin: 26px 0 10px; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .status.live .dot { background: var(--disgust); }
+  .status.error .dot { background: var(--angry); }
+
+  main {
+    display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+    gap: 24px; padding: 0 28px 32px; max-width: 1400px; margin: 0 auto;
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; padding: 0 16px 24px; }
+    header { padding: 14px 16px; }
+  }
+
+  .frame {
+    position: relative; aspect-ratio: 16 / 9; background: #0c1116;
+    border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
+  }
+  .frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 0.92rem; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 16px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button[aria-pressed="true"] { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+  button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px 22px 26px; align-self: start;
+  }
+  .panel h2:first-child { margin-top: 0; }
+
+  .now { display: flex; align-items: stretch; gap: 14px; }
+  .swatch { width: 6px; border-radius: 3px; background: var(--neutral); transition: background .2s; }
+  #nowLabel { font-size: 2.1rem; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; }
+  #nowSub { color: var(--muted); font-size: 0.92rem; margin-top: 4px; }
+
+  .bar-row { display: grid; grid-template-columns: 84px 1fr 44px; align-items: center; gap: 10px; margin: 7px 0; font-size: 0.92rem; }
+  .bar-row .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .track { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; }
+  .fill { height: 100%; width: 0; border-radius: 5px; transition: width .2s ease-out; }
+
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 0.95rem; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-weight: 600; text-align: right; }
+
+  #timeline { width: 100%; height: 26px; border-radius: 6px; background: var(--track); image-rendering: pixelated; display: block; }
+  .stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--track); }
+  .stack span { display: block; height: 100%; transition: width .3s; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; list-style: none; margin: 12px 0 0; padding: 0; font-size: 0.85rem; color: var(--muted); }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .note { margin-top: 22px; font-size: 0.8rem; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Expression monitor</h1>
+  <div class="status" id="status" role="status">
+    <span class="dot"></span><span id="statusText">Connecting</span>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="frame">
+      <img id="video" src="/video" alt="Live camera view with detected faces outlined">
+    </div>
+    <div class="controls">
+      <button id="snap" type="button">Save snapshot</button>
+      <button id="mirror" type="button" aria-pressed="true">Mirror view</button>
+      <button id="reset" type="button">Reset session</button>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <h2>Right now</h2>
+    <div class="now">
+      <div class="swatch" id="swatch"></div>
+      <div>
+        <div id="nowLabel">Waiting for a face</div>
+        <div id="nowSub">Face the camera in even light.</div>
+      </div>
+    </div>
+
+    <h2>Expression mix</h2>
+    <div id="bars"></div>
+
+    <h2>Face details</h2>
+    <dl>
+      <dt>Faces in view</dt><dd id="dCount">0</dd>
+      <dt>Eyes</dt><dd id="dEyes">-</dd>
+      <dt>Mouth</dt><dd id="dMouth">-</dd>
+      <dt>Gaze</dt><dd id="dGaze">-</dd>
+    </dl>
+
+    <h2>Last 60 seconds</h2>
+    <canvas id="timeline" width="240" height="1" aria-label="Expression timeline"></canvas>
+
+    <h2>This session</h2>
+    <div class="stack" id="stack"></div>
+    <ul class="legend" id="legend"></ul>
+
+    <p class="note">Details show the largest face. Expressions are estimates from facial movement, not a measure of how someone actually feels.</p>
+  </aside>
+</main>
+
+<script>
+const EXPR = [
+  ["happy", "Happy"], ["surprised", "Surprised"], ["sad", "Sad"],
+  ["angry", "Angry"], ["disgust", "Disgusted"], ["neutral", "Neutral"],
+];
+const css = getComputedStyle(document.documentElement);
+const color = k => css.getPropertyValue("--" + k).trim();
+const $ = id => document.getElementById(id);
+
+// Build static rows
+EXPR.forEach(([k, name]) => {
+  $("bars").insertAdjacentHTML("beforeend",
+    `<div class="bar-row"><span>${name}</span>
+      <div class="track"><div class="fill" id="f-${k}" style="background:var(--${k})"></div></div>
+      <span class="pct" id="p-${k}">0%</span></div>`);
+  $("stack").insertAdjacentHTML("beforeend",
+    `<span id="s-${k}" style="width:0;background:var(--${k})" title="${name}"></span>`);
+  $("legend").insertAdjacentHTML("beforeend",
+    `<li><i style="background:var(--${k})"></i>${name} <b id="l-${k}">0%</b></li>`);
+});
+
+const HISTORY = 240;               // 240 samples at ~4 per second = 60 s
+const history = [];
+const ctx = $("timeline").getContext("2d");
+
+function drawTimeline() {
+  ctx.clearRect(0, 0, HISTORY, 1);
+  const offset = HISTORY - history.length;
+  history.forEach((k, i) => {
+    if (!k) return;
+    ctx.fillStyle = color(k);
+    ctx.fillRect(offset + i, 0, 1, 1);
+  });
+}
+
+const pct = v => Math.round(v * 100) + "%";
+
+function render(s) {
+  const status = $("status");
+  if (s.error) {
+    status.className = "status error";
+    $("statusText").textContent = "Camera problem: " + s.error;
+    return;
+  }
+  status.className = "status live";
+  $("statusText").textContent = "Camera live, " + Math.round(s.fps) + " fps";
+  $("dCount").textContent = s.face_count;
+
+  const f = s.primary === null ? null : s.faces[s.primary];
+  if (f) {
+    const name = EXPR.find(e => e[0] === f.expression)[1];
+    $("nowLabel").textContent = name;
+    $("nowSub").textContent = pct(f.confidence) + " confident";
+    $("swatch").style.background = color(f.expression);
+    $("dEyes").textContent = f.eyes;
+    $("dMouth").textContent = f.mouth;
+    $("dGaze").textContent = f.gaze;
+  } else {
+    $("nowLabel").textContent = "Waiting for a face";
+    $("nowSub").textContent = "Face the camera in even light.";
+    $("swatch").style.background = color("neutral");
+    ["dEyes", "dMouth", "dGaze"].forEach(id => $(id).textContent = "-");
+  }
+
+  EXPR.forEach(([k]) => {
+    const v = f ? f.scores[k] : 0;
+    $("f-" + k).style.width = pct(v);
+    $("p-" + k).textContent = pct(v);
+    $("s-" + k).style.width = pct(s.session[k]);
+    $("l-" + k).textContent = pct(s.session[k]);
+  });
+
+  history.push(f ? f.expression : null);
+  if (history.length > HISTORY) history.shift();
+  drawTimeline();
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    render(await r.json());
+  } catch (e) {
+    $("status").className = "status error";
+    $("statusText").textContent = "Connection lost, retrying";
+  }
+  setTimeout(poll, 250);
+}
+poll();
+
+// Buttons
+$("snap").onclick = () => { window.location.href = "/api/snapshot"; };
+$("reset").onclick = async () => { await fetch("/api/reset", { method: "POST" }); history.length = 0; };
+$("mirror").onclick = async () => {
+  const r = await fetch("/api/mirror", { method: "POST" });
+  $("mirror").setAttribute("aria-pressed", (await r.json()).mirror);
+};
+fetch("/api/mirror").then(r => r.json()).then(j => $("mirror").setAttribute("aria-pressed", j.mirror));
+</script>
+</body>
+</html>
